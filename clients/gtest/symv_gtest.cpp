@@ -1,5 +1,5 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  *
  * ************************************************************************ */
 
@@ -14,7 +14,6 @@
 
 namespace
 {
-
     // By default, this test does not apply to any types.
     // The unnamed second parameter is used for enable_if below.
     template <typename, typename = void>
@@ -30,8 +29,8 @@ template <typename T>
 struct symv_testing<
     T,
     typename std::enable_if<std::is_same<T, float>{} || std::is_same<T, double>{}>::type>
+    : rocblas_test_valid
 {
-    explicit operator bool() { return true; }
     void operator()(const Arguments& arg)
     {
         if(!strcmp(arg.function, "symv"))

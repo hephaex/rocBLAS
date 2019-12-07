@@ -1,7 +1,6 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
-
 #include "cblas_interface.hpp"
 #include "flops.hpp"
 #include "near.hpp"
@@ -90,18 +89,8 @@ void testing_gemm(const Arguments& arg)
     rocblas_int ldb = arg.ldb;
     rocblas_int ldc = arg.ldc;
 
-    T h_alpha;
-    T h_beta;
-    if(std::is_same<T, rocblas_half>{})
-    {
-        h_alpha = float_to_half(arg.alpha);
-        h_beta  = rocblas_isnan(arg.beta) ? 0 : float_to_half(arg.beta);
-    }
-    else
-    {
-        h_alpha = arg.alpha;
-        h_beta  = rocblas_isnan(arg.beta) ? 0 : arg.beta;
-    }
+    T h_alpha = arg.get_alpha<T>();
+    T h_beta  = arg.get_beta<T>();
 
     double               gpu_time_used, cpu_time_used;
     double               rocblas_gflops, cblas_gflops;
@@ -114,6 +103,7 @@ void testing_gemm(const Arguments& arg)
     rocblas_int B_col = transB == rocblas_operation_none ? N : K;
 
     // check here to prevent undefined memory allocation error
+    // Note: K==0 is not an early exit, since C still needs to be multiplied by beta
     if(M < 0 || N < 0 || K < 0 || lda < A_row || ldb < B_row || ldc < M)
     {
         static const size_t safe_size = 100;
@@ -135,9 +125,9 @@ void testing_gemm(const Arguments& arg)
         return;
     }
 
-    const auto size_A = static_cast<size_t>(lda) * static_cast<size_t>(A_col);
-    const auto size_B = static_cast<size_t>(ldb) * static_cast<size_t>(B_col);
-    const auto size_C = static_cast<size_t>(ldc) * static_cast<size_t>(N);
+    const auto size_A = size_t(lda) * size_t(A_col);
+    const auto size_B = size_t(ldb) * size_t(B_col);
+    const auto size_C = size_t(ldc) * size_t(N);
 
     // allocate memory on device
     device_vector<T> dA(size_A);
@@ -164,7 +154,7 @@ void testing_gemm(const Arguments& arg)
         rocblas_seedrand();
         rocblas_init<T>(hA, A_row, A_col, lda);
         rocblas_init_alternating_sign<T>(hB, B_row, B_col, ldb);
-        if(rocblas_isnan(arg.beta))
+        if(rocblas_isnan(arg.beta) || rocblas_isnan(arg.betai))
             rocblas_init_nan<T>(hC_1, M, N, ldc);
         else
             rocblas_init<T>(hC_1, M, N, ldc);
@@ -173,7 +163,7 @@ void testing_gemm(const Arguments& arg)
     {
         rocblas_init_sin<T>(hA, A_row, A_col, lda);
         rocblas_init_cos<T>(hB, B_row, B_col, ldb);
-        if(rocblas_isnan(arg.beta))
+        if(rocblas_isnan(arg.beta) || rocblas_isnan(arg.betai))
             rocblas_init_nan<T>(hC_1, M, N, ldc);
         else
             rocblas_init_sin<T>(hC_1, M, N, ldc);
@@ -183,7 +173,7 @@ void testing_gemm(const Arguments& arg)
         rocblas_seedrand();
         rocblas_init_hpl<T>(hA, A_row, A_col, lda);
         rocblas_init_hpl<T>(hB, B_row, B_col, ldb);
-        if(rocblas_isnan(arg.beta))
+        if(rocblas_isnan(arg.beta) || rocblas_isnan(arg.betai))
             rocblas_init_nan<T>(hC_1, M, N, ldc);
         else
             rocblas_init_hpl<T>(hC_1, M, N, ldc);
@@ -247,8 +237,8 @@ void testing_gemm(const Arguments& arg)
 
         if(arg.norm_check)
         {
-            auto err1     = fabs(norm_check_general<T>('F', M, N, ldc, hC_gold, hC_1));
-            auto err2     = fabs(norm_check_general<T>('F', M, N, ldc, hC_gold, hC_2));
+            auto err1     = std::abs(norm_check_general<T>('F', M, N, ldc, hC_gold, hC_1));
+            auto err2     = std::abs(norm_check_general<T>('F', M, N, ldc, hC_gold, hC_2));
             rocblas_error = err1 > err2 ? err1 : err2;
         }
     }
@@ -283,10 +273,8 @@ void testing_gemm(const Arguments& arg)
         std::cout << std::endl;
 
         std::cout << arg.transA << "," << arg.transB << "," << M << "," << N << "," << K << ","
-                  << (std::is_same<T, rocblas_half>{} ? half_to_float(h_alpha) : h_alpha) << ","
-                  << lda << "," << ldb << ","
-                  << (std::is_same<T, rocblas_half>{} ? half_to_float(h_beta) : h_beta) << ","
-                  << ldc << "," << rocblas_gflops << "," << gpu_time_used / number_hot_calls;
+                  << arg.get_alpha<T>() << "," << lda << "," << ldb << "," << arg.get_beta<T>()
+                  << "," << ldc << "," << rocblas_gflops << "," << gpu_time_used / number_hot_calls;
 
         if(arg.unit_check || arg.norm_check)
             std::cout << "," << cblas_gflops << "," << cpu_time_used << "," << rocblas_error;

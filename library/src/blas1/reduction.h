@@ -1,15 +1,10 @@
 #ifndef REDUCTION_H_
 #define REDUCTION_H_
-
-#include <cstddef>
-#include <type_traits>
-
-#include "definitions.h"
-#include "rocblas.h"
-
 #include "handle.h"
-
-#include <hip/hip_runtime.h>
+#include "rocblas.h"
+#include "utility.h"
+#include <type_traits>
+#include <utility>
 
 /*
  * ===========================================================================
@@ -159,11 +154,12 @@ template <rocblas_int NB,
           typename REDUCE = rocblas_reduce_sum,
           typename Ti,
           typename To>
+__attribute__((amdgpu_flat_work_group_size((NB < 128) ? NB : 128, (NB > 256) ? NB : 256)))
 __global__ void
     rocblas_reduction_kernel_part1(rocblas_int n, const Ti* x, rocblas_int incx, To* workspace)
 {
-    ssize_t       tx  = hipThreadIdx_x;
-    ssize_t       tid = hipBlockIdx_x * hipBlockDim_x + tx;
+    ptrdiff_t     tx  = hipThreadIdx_x;
+    ptrdiff_t     tid = hipBlockIdx_x * hipBlockDim_x + tx;
     __shared__ To tmp[NB];
 
     // bound
@@ -185,7 +181,9 @@ template <rocblas_int NB,
           typename FINALIZE = rocblas_finalize_identity,
           typename To,
           typename Tr>
-__global__ void rocblas_reduction_kernel_part2(rocblas_int nblocks, To* workspace, Tr* result)
+__attribute__((amdgpu_flat_work_group_size((NB < 128) ? NB : 128, (NB > 256) ? NB : 256)))
+__global__ void
+    rocblas_reduction_kernel_part2(rocblas_int nblocks, To* workspace, Tr* result)
 {
     rocblas_int   tx = hipThreadIdx_x;
     __shared__ To tmp[NB];
@@ -220,7 +218,7 @@ __global__ void rocblas_reduction_kernel_part2(rocblas_int nblocks, To* workspac
 
     // Store result on device or in workspace
     if(tx == 0)
-        *result = FINALIZE{}(tmp[0]);
+        *result = Tr(FINALIZE{}(tmp[0]));
 }
 
 // At least two kernels are needed to finish the reduction

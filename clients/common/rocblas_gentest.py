@@ -22,6 +22,9 @@ INT_RANGE_RE = re.compile(r'\s*(-?\d+)\s*\.\.\s*(-?\d+)\s*(?:\.\.\s*(-?\d+)\s*)?
 # Regex for include: YAML extension
 INCLUDE_RE = re.compile(r'include\s*:\s*(.*)')
 
+# Regex for complex types
+COMPLEX_RE = re.compile(r'f\d+_c$')
+
 args = {}
 testcases = set()
 datatypes = {}
@@ -189,7 +192,79 @@ def get_arguments(doc):
 
 def setdefaults(test):
     """Set default values for parameters"""
+    # Do not put constant defaults here -- use rocblas_common.yaml for that.
+    # These are only for dynamic defaults
     # TODO: This should be ideally moved to YAML file, with eval'd expressions.
+
+    if test['function'] in ('asum_strided_batched', 'nrm2_strided_batched',
+                            'scal_strided_batched', 'swap_strided_batched',
+                            'copy_strided_batched', 'dot_strided_batched',
+                            'dotc_strided_batched', 'rot_strided_batched',
+                            'rotm_strided_batched', 'iamax_strided_batched',
+                            'iamin_strided_batched', 'axpy_strided_batched'):
+        if all([x in test for x in ('N', 'incx', 'stride_scale')]):
+            ldx = int(test['N'] * abs(test['incx']) * test['stride_scale'])
+            test.setdefault('stride_x', ldx)
+        if all([x in test for x in ('N', 'incy', 'stride_scale')]):
+            ldy = int(test['N'] * abs(test['incy']) * test['stride_scale'])
+            test.setdefault('stride_y', ldy)
+        # we are using stride_c for param in rotm
+        if all([x in test for x in ('stride_scale')]):
+            test.setdefault('stride_c', int(test['stride_scale']) * 5)
+
+    elif test['function'] in ('gemv_strided_batched', 'ger_strided_batched', 'trsv_strided_batched'):
+        if test['function'] in ('ger_strided_batched', 'trsv_strided_batched') or test['transA'] in ('T', 'C'):
+            if all([x in test for x in ('M', 'incx', 'stride_scale')]):
+                ldx = int(test['M'] * abs(test['incx']) * test['stride_scale'])
+                test.setdefault('stride_x', ldx)
+            if all([x in test for x in ('N', 'incy', 'stride_scale')]):
+                ldy = int(test['N'] * abs(test['incy']) * test['stride_scale'])
+                test.setdefault('stride_y', ldy)
+        else:
+            if all([x in test for x in ('N', 'incx', 'stride_scale')]):
+                ldx = int(test['N'] * abs(test['incx']) * test['stride_scale'])
+                test.setdefault('stride_x', ldx)
+            if all([x in test for x in ('M', 'incy', 'stride_scale')]):
+                ldy = int(test['M'] * abs(test['incy']) * test['stride_scale'])
+                test.setdefault('stride_y', ldy)
+
+    # we are using stride_c for arg c and stride_d for arg s in rotg
+    # these are are single values for each batch
+    elif test['function'] in ('rotg_strided_batched'):
+        if 'stride_scale' in test:
+            test.setdefault('stride_a', int(test['stride_scale']))
+            test.setdefault('stride_b', int(test['stride_scale']))
+            test.setdefault('stride_c', int(test['stride_scale']))
+            test.setdefault('stride_d', int(test['stride_scale']))
+
+    # we are using stride_a for d1, stride_b for d2, and stride_c for param in
+    # rotmg. These are are single values for each batch, except param which is
+    # a 5 element array
+    elif test['function'] in ('rotmg_strided_batched'):
+        if 'stride_scale' in test:
+            test.setdefault('stride_a', int(test['stride_scale']))
+            test.setdefault('stride_b', int(test['stride_scale']))
+            test.setdefault('stride_c', int(test['stride_scale']) * 5)
+            test.setdefault('stride_x', int(test['stride_scale']))
+            test.setdefault('stride_y', int(test['stride_scale']))
+
+    elif test['function'] in ('trsm_strided_batched', 'trsm_strided_batched_ex'):
+        if all([x in test for x in ('N', 'ldb', 'stride_scale')]):
+            ldN = int(test['N'] * test['ldb'] * test['stride_scale'])
+            test.setdefault('stride_b', ldN)
+
+        if test['side'].upper() == 'L':
+            if all([x in test for x in ('M', 'lda', 'stride_scale')]):
+                ldM = int(test['M'] * test['lda'] * test['stride_scale'])
+                test.setdefault('stride_a', ldM)
+        else:
+            if all([x in test for x in ('N', 'lda', 'stride_scale')]):
+                ldN = int(test['N'] * test['lda'] * test['stride_scale'])
+                test.setdefault('stride_a', ldN)
+
+    test.setdefault('stride_x', 0)
+    test.setdefault('stride_y', 0)
+
     if test['transA'] == '*' or test['transB'] == '*':
         test.setdefault('lda', 0)
         test.setdefault('ldb', 0)
@@ -252,15 +327,19 @@ def write_test(test):
     # scalars, we coerce the string/numeric value into ctype.
     arg = []
     for name, ctype in param['Arguments']._fields_:
-        if issubclass(ctype, ctypes.Array):
-            if issubclass(ctype._type_, ctypes.c_char):
+        try:
+            if issubclass(ctype, ctypes.Array):
+                if issubclass(ctype._type_, ctypes.c_char):
+                    arg.append(bytes(test[name], 'utf_8'))
+                else:
+                    arg.append(ctype(*test[name]))
+            elif issubclass(ctype, ctypes.c_char):
                 arg.append(bytes(test[name], 'utf_8'))
             else:
-                arg.append(ctype(*test[name]))
-        elif issubclass(ctype, ctypes.c_char):
-            arg.append(bytes(test[name], 'utf_8'))
-        else:
-            arg.append(ctype(test[name]))
+                arg.append(ctype(test[name]))
+        except TypeError as err:
+            sys.exit("TypeError: " + str(err) + " for " + name +
+                     ", which has type " + str(type(test[name])) + "\n")
 
     byt = bytes(param['Arguments'](*arg))
     if byt not in testcases:
@@ -273,11 +352,21 @@ def instantiate(test):
     """Instantiate a given test case"""
     test = test.copy()
 
-    # Any Arguments fields declared as enums
+    # Any Arguments fields declared as enums (a_type, b_type, etc.)
     enum_args = [decl[0] for decl in param['Arguments']._fields_
                  if decl[1].__module__ == '__main__']
     try:
         setdefaults(test)
+
+        # If no enum arguments are complex, clear alphai and betai
+        for typename in enum_args:
+            if COMPLEX_RE.match(test[typename]):
+                break
+        else:
+            for name in ('alphai', 'betai'):
+                if name in test:
+                    test[name] = 0.0
+
         # For enum arguments, replace name with value
         for typename in enum_args:
             test[typename] = datatypes[test[typename]]
@@ -330,9 +419,15 @@ def generate(test, function):
 
             # For a bare dictionary, wrap it in a list and apply it once
             for item in [ilist] if type(ilist) == dict else ilist:
-                case = test.copy()
-                case.update(item)
-                generate(case, function)  # original test merged with each item
+                try:
+                    case = test.copy()
+                    case.update(item)  # original test merged with each item
+                    generate(case, function)
+                except TypeError as err:
+                    sys.exit("TypeError: " + str(err) + " for " + argname +
+                             ", which has type " + str(type(item)) +
+                             "\nA name listed in \"Dictionary lists to expand\" "
+                             "must be a defined as a dictionary.\n")
             return
 
     for key in sorted(list(test)):

@@ -1,10 +1,11 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  *
  * ************************************************************************ */
 
 #include "cblas_interface.hpp"
 #include "flops.hpp"
+#include "near.hpp"
 #include "norm.hpp"
 #include "rocblas.hpp"
 #include "rocblas_datatype2string.hpp"
@@ -19,20 +20,22 @@
 template <typename T>
 void testing_gemv_bad_arg(const Arguments& arg)
 {
-    const rocblas_int       M      = 100;
-    const rocblas_int       N      = 100;
-    const rocblas_int       lda    = 100;
-    const rocblas_int       incx   = 1;
-    const rocblas_int       incy   = 1;
-    const T                 alpha  = 1.0;
-    const T                 beta   = 1.0;
+    const rocblas_int M    = 100;
+    const rocblas_int N    = 100;
+    const rocblas_int lda  = 100;
+    const rocblas_int incx = 1;
+    const rocblas_int incy = 1;
+    T                 alpha;
+    T                 beta;
+    alpha = beta = 1.0;
+
     const rocblas_operation transA = rocblas_operation_none;
 
     rocblas_local_handle handle;
 
-    size_t size_A = lda * static_cast<size_t>(N);
-    size_t size_x = N * static_cast<size_t>(incx);
-    size_t size_y = M * static_cast<size_t>(incy);
+    size_t size_A = lda * size_t(N);
+    size_t size_x = N * size_t(incx);
+    size_t size_y = M * size_t(incy);
 
     // Naming: dK is in GPU (device) memory. hK is in CPU (host) memory
     host_vector<T> hA(size_A);
@@ -93,8 +96,8 @@ void testing_gemv(const Arguments& arg)
     rocblas_int       lda     = arg.lda;
     rocblas_int       incx    = arg.incx;
     rocblas_int       incy    = arg.incy;
-    T                 h_alpha = static_cast<T>(arg.alpha);
-    T                 h_beta  = rocblas_isnan(arg.beta) ? 0 : static_cast<T>(arg.beta);
+    T                 h_alpha = arg.get_alpha<T>();
+    T                 h_beta  = arg.get_beta<T>();
     rocblas_operation transA  = char2rocblas_operation(arg.transA);
 
     rocblas_local_handle handle;
@@ -120,7 +123,7 @@ void testing_gemv(const Arguments& arg)
         return;
     }
 
-    size_t size_A = lda * static_cast<size_t>(N);
+    size_t size_A = lda * size_t(N);
     size_t size_x, dim_x, abs_incx;
     size_t size_y, dim_y, abs_incy;
 
@@ -213,7 +216,7 @@ void testing_gemv(const Arguments& arg)
         cblas_gemv<T>(transA, M, N, h_alpha, hA, lda, hx, incx, h_beta, hy_gold, incy);
 
         cpu_time_used = get_time_us() - cpu_time_used;
-        cblas_gflops  = gemv_gflop_count<T>(M, N) / cpu_time_used * 1e6;
+        cblas_gflops  = gemv_gflop_count<T>(transA, M, N) / cpu_time_used * 1e6;
 
         if(arg.unit_check)
         {
@@ -231,7 +234,7 @@ void testing_gemv(const Arguments& arg)
     if(arg.timing)
     {
         int number_cold_calls = 2;
-        int number_hot_calls  = 100;
+        int number_hot_calls  = arg.iters;
         CHECK_ROCBLAS_ERROR(rocblas_set_pointer_mode(handle, rocblas_pointer_mode_host));
 
         for(int iter = 0; iter < number_cold_calls; iter++)
@@ -247,19 +250,19 @@ void testing_gemv(const Arguments& arg)
         }
 
         gpu_time_used     = (get_time_us() - gpu_time_used) / number_hot_calls;
-        rocblas_gflops    = gemv_gflop_count<T>(M, N) / gpu_time_used * 1e6;
+        rocblas_gflops    = gemv_gflop_count<T>(transA, M, N) / gpu_time_used * 1e6;
         rocblas_bandwidth = (1.0 * M * N) * sizeof(T) / gpu_time_used / 1e3;
 
         // only norm_check return an norm error, unit check won't return anything
-        std::cout << "M,N,alpha,lda,incx,incy,rocblas-Gflops,rocblas-GB/s,";
+        std::cout << "M,N,alpha,lda,incx,beta,incy,rocblas-Gflops,rocblas-GB/s,";
         if(arg.norm_check)
         {
             std::cout << "CPU-Gflops,norm_error_host_ptr,norm_error_device_ptr";
         }
         std::cout << std::endl;
 
-        std::cout << M << "," << N << "," << h_alpha << "," << lda << "," << incx << "," << incy
-                  << "," << rocblas_gflops << "," << rocblas_bandwidth << ",";
+        std::cout << M << "," << N << "," << h_alpha << "," << lda << "," << incx << "," << h_beta
+                  << "," << incy << "," << rocblas_gflops << "," << rocblas_bandwidth << ",";
 
         if(arg.norm_check)
         {

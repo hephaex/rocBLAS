@@ -1,21 +1,23 @@
 /* ************************************************************************
- * Copyright 2016-2018 Advanced Micro Devices, Inc.
+ * Copyright 2016-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
 
 /*! \file
  * \brief rocblas-types.h defines data types used by rocblas
  */
 
-#pragma once
 #ifndef _ROCBLAS_TYPES_H_
 #define _ROCBLAS_TYPES_H_
 
-#include <stddef.h>
-#include <stdint.h>
-
-#include <hip/hip_vector_types.h>
+// Request _Float16 type extension
+#define __STDC_WANT_IEC_60559_TYPES_EXT__ 1
 
 #include "rocblas_bfloat16.h"
+#include <float.h>
+#include <math.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /*! \brief rocblas_handle is a structure holding the rocblas library context.
  * It must be initialized using rocblas_create_handle()
@@ -25,32 +27,44 @@
  */
 typedef struct _rocblas_handle* rocblas_handle;
 
+// Forward declaration of hipStream_t
+typedef struct ihipStream_t* hipStream_t;
+
 // integer types
-/*! \brief To specify whether int32 or int64 is used
- */
+// /*! \brief To specify whether int32 or int64 is used
+//  */
 #if defined(rocblas_ILP64)
 typedef int64_t rocblas_int;
-typedef int64_t rocblas_long;
+typedef int64_t rocblas_stride;
 #else
 typedef int32_t rocblas_int;
-typedef int64_t rocblas_long;
+typedef int64_t rocblas_stride;
 #endif
+
+// floating point types
+typedef float  rocblas_float;
+typedef double rocblas_double;
+
+// Clang supports _Float16 on C11 and C++11
+// GCC does not currently support _Float16 on amd64
+/*! \brief Represents a 16 bit floating point number. */
+#if __clang__ && (__STDC_VERSION__ >= 201112L || __cplusplus >= 201103L)
+typedef _Float16 rocblas_half;
+#else
+typedef struct
+{
+    uint16_t data;
+} rocblas_half;
+#endif
+
 // complex types
-typedef float2  rocblas_float_complex;
-typedef double2 rocblas_double_complex;
-// half types
-typedef uint16_t rocblas_half;
-typedef float2   rocblas_half_complex;
+#include "rocblas-complex-types.h"
 
 /* ============================================================================================ */
 
 /*! parameter constants.
  *  numbering is consistent with CBLAS, ACML and most standard C BLAS libraries
  */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /*! \brief Used to specify whether the matrix is to be transposed or not. */
 typedef enum rocblas_operation_
@@ -103,6 +117,10 @@ typedef enum rocblas_status_
     rocblas_status_invalid_size    = 4, /**< invalid size parameter */
     rocblas_status_memory_error    = 5, /**< failed internal memory allocation, copy or dealloc */
     rocblas_status_internal_error  = 6, /**< other internal library failure */
+    rocblas_status_perf_degraded   = 7, /**< performance degraded due to low device memory */
+    rocblas_status_size_query_mismatch = 8, /**< unmatched start/stop size query */
+    rocblas_status_size_increased      = 9, /**< queried device memory size increased */
+    rocblas_status_size_unchanged      = 10, /**< queried device memory size unchanged */
 } rocblas_status;
 
 /*! \brief Indicates the precision width of data stored in a blas type. */
@@ -126,19 +144,26 @@ typedef enum rocblas_datatype_
     rocblas_datatype_bf16_c = 169, /**< 16 bit bfloat, complex */
 } rocblas_datatype;
 
-/*! \brief Indicates the pointer is device pointer or host pointer */
+/*! \brief Indicates the pointer is device pointer or host pointer. This is typically used for
+*    scalars such as alpha and beta. */
 typedef enum rocblas_pointer_mode_
 {
-    rocblas_pointer_mode_host   = 0,
+    /*! \brief Scalar values affected by this variable will be located on the host. */
+    rocblas_pointer_mode_host = 0,
+    /*! \brief Scalar values affected by this variable will be located on the device. */
     rocblas_pointer_mode_device = 1
 } rocblas_pointer_mode;
 
 /*! \brief Indicates if layer is active with bitmask*/
 typedef enum rocblas_layer_mode_
 {
-    rocblas_layer_mode_none        = 0b0000000000,
-    rocblas_layer_mode_log_trace   = 0b0000000001,
-    rocblas_layer_mode_log_bench   = 0b0000000010,
+    /*! \brief No logging will take place. */
+    rocblas_layer_mode_none = 0b0000000000,
+    /*! \brief A line containing the function name and value of arguments passed will be printed with each rocBLAS function call. */
+    rocblas_layer_mode_log_trace = 0b0000000001,
+    /*! \brief Outputs a line each time a rocBLAS function is called, this line can be used with rocblas-bench to make the same call again. */
+    rocblas_layer_mode_log_bench = 0b0000000010,
+    /*! \brief Outputs a YAML description of each rocBLAS function called, along with its arguments and number of times it was called. */
     rocblas_layer_mode_log_profile = 0b0000000100,
 } rocblas_layer_mode;
 
@@ -147,16 +172,5 @@ typedef enum rocblas_gemm_algo_
 {
     rocblas_gemm_algo_standard = 0b0000000000,
 } rocblas_gemm_algo;
-
-/*! \brief Indicates selected option to run trsm*/
-typedef enum rocblas_trsm_option_
-{
-    rocblas_trsm_high_performance = 0,
-    rocblas_trsm_low_memory       = 1
-} rocblas_trsm_option;
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

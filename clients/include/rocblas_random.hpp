@@ -1,5 +1,5 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
 
 #ifndef ROCBLAS_RANDOM_H_
@@ -31,9 +31,8 @@ class rocblas_nan_rng
     static T random_nan_data()
     {
         static_assert(sizeof(UINT_T) == sizeof(T), "Type sizes do not match");
-        union u_t
+        union
         {
-            u_t() {}
             UINT_T u;
             T      fp;
         } x;
@@ -46,7 +45,7 @@ class rocblas_nan_rng
 
 public:
     // Random integer
-    template <typename T, typename = typename std::enable_if<std::is_integral<T>{}>::type>
+    template <typename T, typename std::enable_if<std::is_integral<T>{}, int>::type = 0>
     explicit operator T()
     {
         return std::uniform_int_distribution<T>{}(rocblas_rng);
@@ -64,7 +63,7 @@ public:
         return random_nan_data<float, uint32_t, 23, 8>();
     }
 
-    // Random NaN half (non-template rocblas_half takes precedence over integer template above)
+    // Random NaN half
     explicit operator rocblas_half()
     {
         return random_nan_data<rocblas_half, uint16_t, 10, 5>();
@@ -74,6 +73,16 @@ public:
     explicit operator rocblas_bfloat16()
     {
         return random_nan_data<rocblas_bfloat16, uint16_t, 7, 8>();
+    }
+
+    explicit operator rocblas_float_complex()
+    {
+        return {float(*this), float(*this)};
+    }
+
+    explicit operator rocblas_double_complex()
+    {
+        return {double(*this), double(*this)};
     }
 };
 
@@ -87,12 +96,28 @@ inline T random_generator()
     return std::uniform_int_distribution<int>(1, 10)(rocblas_rng);
 }
 
+// for rocblas_float_complex, generate two random ints (same behaviour as for floats)
+template <>
+inline rocblas_float_complex random_generator<rocblas_float_complex>()
+{
+    return {float(std::uniform_int_distribution<int>(1, 10)(rocblas_rng)),
+            float(std::uniform_int_distribution<int>(1, 10)(rocblas_rng))};
+};
+
+// for rocblas_double_complex, generate two random ints (same behaviour as for doubles)
+template <>
+inline rocblas_double_complex random_generator<rocblas_double_complex>()
+{
+    return {double(std::uniform_int_distribution<int>(1, 10)(rocblas_rng)),
+            double(std::uniform_int_distribution<int>(1, 10)(rocblas_rng))};
+};
+
 // for rocblas_half, generate float, and convert to rocblas_half
 /*! \brief  generate a random number in range [-2,-1,0,1,2] */
 template <>
 inline rocblas_half random_generator<rocblas_half>()
 {
-    return float_to_half(std::uniform_int_distribution<int>(-2, 2)(rocblas_rng));
+    return rocblas_half(std::uniform_int_distribution<int>(-2, 2)(rocblas_rng));
 };
 
 // for rocblas_bfloat16, generate float, and convert to rocblas_bfloat16

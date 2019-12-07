@@ -1,7 +1,6 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
-
 #include "cblas_interface.hpp"
 #include "flops.hpp"
 #include "near.hpp"
@@ -50,8 +49,6 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
     rocblas_gemm_algo algo           = rocblas_gemm_algo_standard;
     int32_t           solution_index = 0;
     rocblas_int       flags          = 0;
-    size_t            workspace_size = 0;
-    void*             workspace      = nullptr;
 
     const size_t safe_size = 100;
 
@@ -99,9 +96,7 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
                                                           compute_type,
                                                           algo,
                                                           solution_index,
-                                                          flags,
-                                                          &workspace_size,
-                                                          workspace),
+                                                          flags),
                           rocblas_status_invalid_pointer);
 
     EXPECT_ROCBLAS_STATUS(rocblas_gemm_strided_batched_ex(handle,
@@ -132,9 +127,7 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
                                                           compute_type,
                                                           algo,
                                                           solution_index,
-                                                          flags,
-                                                          &workspace_size,
-                                                          workspace),
+                                                          flags),
                           rocblas_status_invalid_pointer);
 
     EXPECT_ROCBLAS_STATUS(rocblas_gemm_strided_batched_ex(handle,
@@ -165,9 +158,7 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
                                                           compute_type,
                                                           algo,
                                                           solution_index,
-                                                          flags,
-                                                          &workspace_size,
-                                                          workspace),
+                                                          flags),
                           rocblas_status_invalid_pointer);
 
     EXPECT_ROCBLAS_STATUS(rocblas_gemm_strided_batched_ex(handle,
@@ -198,9 +189,7 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
                                                           compute_type,
                                                           algo,
                                                           solution_index,
-                                                          flags,
-                                                          &workspace_size,
-                                                          workspace),
+                                                          flags),
                           rocblas_status_invalid_pointer);
 
     EXPECT_ROCBLAS_STATUS(rocblas_gemm_strided_batched_ex(handle,
@@ -231,9 +220,7 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
                                                           compute_type,
                                                           algo,
                                                           solution_index,
-                                                          flags,
-                                                          &workspace_size,
-                                                          workspace),
+                                                          flags),
                           rocblas_status_invalid_pointer);
 
     EXPECT_ROCBLAS_STATUS(rocblas_gemm_strided_batched_ex(handle,
@@ -264,9 +251,7 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
                                                           compute_type,
                                                           algo,
                                                           solution_index,
-                                                          flags,
-                                                          &workspace_size,
-                                                          workspace),
+                                                          flags),
                           rocblas_status_invalid_pointer);
 
     EXPECT_ROCBLAS_STATUS(rocblas_gemm_strided_batched_ex(nullptr,
@@ -297,40 +282,20 @@ void testing_gemm_strided_batched_ex_bad_arg(const Arguments& arg)
                                                           compute_type,
                                                           algo,
                                                           solution_index,
-                                                          flags,
-                                                          &workspace_size,
-                                                          workspace),
+                                                          flags),
                           rocblas_status_invalid_handle);
 }
 
 template <typename Ti, typename To, typename Tc>
 void testing_gemm_strided_batched_ex(const Arguments& arg)
 {
-    rocblas_gemm_algo algo           = static_cast<rocblas_gemm_algo>(arg.algo);
-    int32_t           solution_index = arg.solution_index;
-    uint32_t          flags          = arg.flags;
-    size_t            workspace_size = arg.workspace_size;
-    void*             workspace      = nullptr;
+    rocblas_gemm_algo algo = rocblas_gemm_algo(arg.algo);
+    int32_t           solution_index(arg.solution_index);
+    uint32_t          flags(arg.flags);
 
-    bool nantest = rocblas_isnan(arg.beta);
-    Tc   h_alpha_Tc, h_beta_Tc;
-    if(std::is_same<Tc, rocblas_half>{})
-    {
-        h_alpha_Tc = float_to_half(arg.alpha);
-        h_beta_Tc  = nantest ? 0 : float_to_half(arg.beta);
-    }
-    else if(std::is_same<Tc, float>{} || std::is_same<Tc, double>{} || std::is_same<Tc, int32_t>{})
-    {
-        h_alpha_Tc = static_cast<Tc>(arg.alpha);
-        h_beta_Tc  = nantest ? 0 : static_cast<Tc>(arg.beta);
-    }
-    else
-    {
-#ifdef GOOGLE_TEST
-        ADD_FAILURE() << "Unimplemented types";
-#endif
-        return;
-    }
+    bool nantest    = rocblas_isnan(arg.beta) || rocblas_isnan(arg.betai);
+    Tc   h_alpha_Tc = arg.get_alpha<Tc>();
+    Tc   h_beta_Tc  = arg.get_beta<Tc>();
 
     double               gpu_time_used, cpu_time_used;
     double               rocblas_gflops, cblas_gflops;
@@ -399,19 +364,15 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
                                                               arg.compute_type,
                                                               algo,
                                                               solution_index,
-                                                              flags,
-                                                              &workspace_size,
-                                                              workspace),
+                                                              flags),
                               rocblas_status_invalid_size);
         return;
     }
 
-    size_t size_one_a = transA == rocblas_operation_none
-                            ? static_cast<size_t>(K) * static_cast<size_t>(lda)
-                            : static_cast<size_t>(M) * static_cast<size_t>(lda);
-    size_t size_one_b = transB == rocblas_operation_none
-                            ? static_cast<size_t>(N) * static_cast<size_t>(ldb)
-                            : static_cast<size_t>(K) * static_cast<size_t>(ldb);
+    size_t size_one_a
+        = transA == rocblas_operation_none ? size_t(K) * size_t(lda) : size_t(M) * size_t(lda);
+    size_t size_one_b
+        = transB == rocblas_operation_none ? size_t(N) * size_t(ldb) : size_t(K) * size_t(ldb);
     size_t size_one_c = N * ldc;
     size_t size_one_d = N * ldd;
     size_t size_a     = size_one_a;
@@ -421,10 +382,10 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
 
     if(batch_count > 1)
     {
-        size_a += static_cast<size_t>(stride_a) * static_cast<size_t>(batch_count - 1);
-        size_b += static_cast<size_t>(stride_b) * static_cast<size_t>(batch_count - 1);
-        size_c += static_cast<size_t>(stride_c) * static_cast<size_t>(batch_count - 1);
-        size_d += static_cast<size_t>(stride_d) * static_cast<size_t>(batch_count - 1);
+        size_a += size_t(stride_a) * size_t(batch_count - 1);
+        size_b += size_t(stride_b) * size_t(batch_count - 1);
+        size_c += size_t(stride_c) * size_t(batch_count - 1);
+        size_d += size_t(stride_d) * size_t(batch_count - 1);
     }
 
     // allocate memory on device
@@ -466,22 +427,22 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
         std::cout << "----A-----------------" << std::endl;
         for(int i = 0; i < size_a; i++)
         {
-            cout << half_to_float(hA[i]) << "  ";
+            cout << float(hA[i]) << "  ";
         }
         std::cout << std::endl << "-----B-----------------" << std::endl;
         for(int i = 0; i < size_b; i++)
         {
-            cout << half_to_float(hB[i]) << "  ";
+            cout << float(hB[i]) << "  ";
         }
         std::cout << std::endl << "-----C-----------------" << std::endl;
         for(int i = 0; i < size_c; i++)
         {
-            cout << half_to_float(hC[i]) << "  ";
+            cout << float(hC[i]) << "  ";
         }
         std::cout << std::endl << "-----D-----------------" << std::endl;
         for(int i = 0; i < size_d; i++)
         {
-            cout << half_to_float(hD_1[i]) << "  ";
+            cout << float(hD_1[i]) << "  ";
         }
         std::cout << std::endl << "-----------------------" << std::endl;
     }
@@ -525,9 +486,9 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
         // 65500 65500             2   -2
         // 65500 65500            -2    2
         //
-        const rocblas_half ieee_half_near_max = float_to_half(65504.0 - 4.0);
-        const rocblas_half positive_two       = float_to_half(2.0);
-        const rocblas_half negative_two       = float_to_half(-2.0);
+        const rocblas_half ieee_half_near_max(65504.0 - 4.0);
+        const rocblas_half positive_two      (2.0);
+        const rocblas_half negative_two      (-2.0);
         if(M >= 2 && N >= 2 && K >= 2)
         {
             hA[0]       = ieee_half_near_max;
@@ -608,9 +569,7 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
                                                             arg.compute_type,
                                                             algo,
                                                             solution_index,
-                                                            flags,
-                                                            &workspace_size,
-                                                            workspace));
+                                                            flags));
 
         CHECK_HIP_ERROR(hipMemcpy(hD_1, dD, sizeof(To) * size_d, hipMemcpyDeviceToHost));
 
@@ -618,7 +577,7 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
         std::cout << std::endl << "-----hD_1---------------------------------------" << std::endl;
         if(std::is_same<To, rocblas_half>{})
             for(int i = 0; i < size_d; i++)
-                cout << half_to_float(hD_1[i]) << "  ";
+                cout << float(hD_1[i]) << "  ";
         else
             for(int i = 0; i < size_d; i++)
                 cout << hD_1[i] << "  ";
@@ -658,9 +617,7 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
                                                             arg.compute_type,
                                                             algo,
                                                             solution_index,
-                                                            flags,
-                                                            &workspace_size,
-                                                            workspace));
+                                                            flags));
 
         CHECK_HIP_ERROR(hipMemcpy(hD_2, dD, sizeof(To) * size_d, hipMemcpyDeviceToHost));
 
@@ -668,7 +625,7 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
         std::cout << std::endl << "-----hD_2---------------------------------------" << std::endl;
         if(std::is_same<To, rocblas_half>{})
             for(int i = 0; i < size_d; i++)
-                cout << half_to_float(hD_2[i]) << "  ";
+                cout << float(hD_2[i]) << "  ";
         else
             for(int i = 0; i < size_d; i++)
                 cout << hD_2[i] << "  ";
@@ -711,7 +668,7 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
         std::cout << std::endl << "---gold---gold---gold---------------------" << std::endl;
         if(std::is_same<To, rocblas_half>{})
             for(int i = 0; i < size_d; i++)
-                std::cout << half_to_float(hD_gold[i]) << "  ";
+                std::cout << float(hD_gold[i]) << "  ";
         else
             for(int i = 0; i < size_d; i++)
                 std::cout << hD_gold[i] << "  ";
@@ -728,11 +685,11 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
                     {
                         if(std::is_same<To, rocblas_half>{})
                         {
-                            std::cout
-                                << "batch, i, j, hd_gold, hd_1= " << i3 << ", " << i2 << ", " << i1
-                                << ", " << half_to_float(hD_gold[i1 + (i2 * ldd) + (i3 * stride_d)])
-                                << ", " << half_to_float(hD_1[i1 + (i2 * ldd) + (i3 * stride_d)])
-                                << ", " << std::endl;
+                            std::cout << "batch, i, j, hd_gold, hd_1= " << i3 << ", " << i2 << ", "
+                                      << i1 << ", "
+                                      << float(hD_gold[i1 + (i2 * ldd) + (i3 * stride_d)]) << ", "
+                                      << float(hD_1[i1 + (i2 * ldd) + (i3 * stride_d)]) << ", "
+                                      << std::endl;
                         }
                         else
                         {
@@ -766,9 +723,9 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
 
         if(arg.norm_check)
         {
-            auto err1 = fabs(
+            auto err1 = std::abs(
                 norm_check_general<To>('F', M, N, ldd, stride_d, batch_count, hD_gold, hD_1));
-            auto err2 = fabs(
+            auto err2 = std::abs(
                 norm_check_general<To>('F', M, N, ldd, stride_d, batch_count, hD_gold, hD_2));
             rocblas_error = err1 > err2 ? err1 : err2;
         }
@@ -810,9 +767,7 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
                                                                 arg.compute_type,
                                                                 algo,
                                                                 solution_index,
-                                                                flags,
-                                                                &workspace_size,
-                                                                workspace));
+                                                                flags));
         }
 
         int number_hot_calls = arg.iters;
@@ -847,9 +802,7 @@ void testing_gemm_strided_batched_ex(const Arguments& arg)
                                             arg.compute_type,
                                             algo,
                                             solution_index,
-                                            flags,
-                                            &workspace_size,
-                                            workspace);
+                                            flags);
         }
         gpu_time_used = get_time_us() - gpu_time_used;
         rocblas_gflops

@@ -1,5 +1,5 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
 
 #include "cblas_interface.hpp"
@@ -21,9 +21,6 @@
 template <typename T>
 void testing_trsm(const Arguments& arg)
 {
-    char* env_p = std::getenv("WORKBUF_TRSM_B_CHNK");
-    setenv("WORKBUF_TRSM_B_CHNK", "32000", 1);
-
     rocblas_int M   = arg.M;
     rocblas_int N   = arg.N;
     rocblas_int lda = arg.lda;
@@ -41,8 +38,8 @@ void testing_trsm(const Arguments& arg)
     rocblas_diagonal  diag   = char2rocblas_diagonal(char_diag);
 
     rocblas_int K      = side == rocblas_side_left ? M : N;
-    size_t      size_A = lda * static_cast<size_t>(K);
-    size_t      size_B = ldb * static_cast<size_t>(N);
+    size_t      size_A = lda * size_t(K);
+    size_t      size_B = ldb * size_t(N);
 
     rocblas_local_handle handle;
 
@@ -55,7 +52,6 @@ void testing_trsm(const Arguments& arg)
         if(!dA || !dXorB)
         {
             CHECK_HIP_ERROR(hipErrorOutOfMemory);
-            setenv("WORKBUF_TRSM_B_CHNK", env_p ? env_p : "", 1);
             return;
         }
 
@@ -63,7 +59,6 @@ void testing_trsm(const Arguments& arg)
         EXPECT_ROCBLAS_STATUS(
             rocblas_trsm<T>(handle, side, uplo, transA, diag, M, N, &alpha_h, dA, lda, dXorB, ldb),
             rocblas_status_invalid_size);
-        setenv("WORKBUF_TRSM_B_CHNK", env_p ? env_p : "", 1);
         return;
     }
 
@@ -89,7 +84,6 @@ void testing_trsm(const Arguments& arg)
     if(!dA || !dXorB || !alpha_d)
     {
         CHECK_HIP_ERROR(hipErrorOutOfMemory);
-        setenv("WORKBUF_TRSM_B_CHNK", env_p ? env_p : "", 1);
         return;
     }
 
@@ -269,18 +263,30 @@ void testing_trsm(const Arguments& arg)
 
     if(arg.timing)
     {
+        int number_cold_calls = 2;
+        int number_hot_calls  = arg.iters;
+
         // GPU rocBLAS
         CHECK_HIP_ERROR(hipMemcpy(dXorB, hXorB_1, sizeof(T) * size_B, hipMemcpyHostToDevice));
 
         CHECK_ROCBLAS_ERROR(rocblas_set_pointer_mode(handle, rocblas_pointer_mode_host));
 
+        for(int i = 0; i < number_cold_calls; i++)
+        {
+            CHECK_ROCBLAS_ERROR(rocblas_trsm<T>(
+                handle, side, uplo, transA, diag, M, N, &alpha_h, dA, lda, dXorB, ldb));
+        }
+
         gpu_time_used = get_time_us(); // in microseconds
 
-        CHECK_ROCBLAS_ERROR(
-            rocblas_trsm<T>(handle, side, uplo, transA, diag, M, N, &alpha_h, dA, lda, dXorB, ldb));
+        for(int i = 0; i < number_hot_calls; i++)
+        {
+            CHECK_ROCBLAS_ERROR(rocblas_trsm<T>(
+                handle, side, uplo, transA, diag, M, N, &alpha_h, dA, lda, dXorB, ldb));
+        }
 
         gpu_time_used  = get_time_us() - gpu_time_used;
-        rocblas_gflops = trsm_gflop_count<T>(M, N, K) / gpu_time_used * 1e6;
+        rocblas_gflops = trsm_gflop_count<T>(M, N, K) * number_hot_calls / gpu_time_used * 1e6;
 
         // CPU cblas
         cpu_time_used = get_time_us();
@@ -300,7 +306,7 @@ void testing_trsm(const Arguments& arg)
 
         std::cout << M << ',' << N << ',' << lda << ',' << ldb << ',' << char_side << ','
                   << char_uplo << ',' << char_transA << ',' << char_diag << ',' << rocblas_gflops
-                  << "," << gpu_time_used;
+                  << "," << gpu_time_used / number_hot_calls;
 
         if(arg.norm_check)
             std::cout << "," << cblas_gflops << "," << cpu_time_used << "," << max_err_1 << ","
@@ -308,6 +314,4 @@ void testing_trsm(const Arguments& arg)
 
         std::cout << std::endl;
     }
-
-    setenv("WORKBUF_TRSM_B_CHNK", env_p ? env_p : "", 1);
 }

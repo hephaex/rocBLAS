@@ -1,5 +1,5 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
 
 #include "cblas_interface.hpp"
@@ -54,8 +54,8 @@ void testing_trsm_ex(const Arguments& arg)
     rocblas_diagonal  diag   = char2rocblas_diagonal(char_diag);
 
     rocblas_int K      = side == rocblas_side_left ? M : N;
-    size_t      size_A = lda * static_cast<size_t>(K);
-    size_t      size_B = ldb * static_cast<size_t>(N);
+    size_t      size_A = lda * size_t(K);
+    size_t      size_B = ldb * size_t(N);
 
     rocblas_local_handle handle;
 
@@ -65,16 +65,30 @@ void testing_trsm_ex(const Arguments& arg)
         static const size_t safe_size = 100; // arbitrarily set to 100
         device_vector<T>    dA(safe_size);
         device_vector<T>    dXorB(safe_size);
+        device_vector<T>    dinvA(safe_size);
         if(!dA || !dXorB)
         {
             CHECK_HIP_ERROR(hipErrorOutOfMemory);
             return;
         }
-        // TODO change this to trsm_ex
+
         CHECK_ROCBLAS_ERROR(rocblas_set_pointer_mode(handle, rocblas_pointer_mode_host));
-        EXPECT_ROCBLAS_STATUS(
-            rocblas_trsm<T>(handle, side, uplo, transA, diag, M, N, &alpha_h, dA, lda, dXorB, ldb),
-            rocblas_status_invalid_size);
+        EXPECT_ROCBLAS_STATUS(rocblas_trsm_ex(handle,
+                                              side,
+                                              uplo,
+                                              transA,
+                                              diag,
+                                              M,
+                                              N,
+                                              &alpha_h,
+                                              dA,
+                                              lda,
+                                              dXorB,
+                                              ldb,
+                                              dinvA,
+                                              TRSM_BLOCK * K,
+                                              arg.compute_type),
+                              rocblas_status_invalid_size);
         return;
     }
 
@@ -217,30 +231,30 @@ void testing_trsm_ex(const Arguments& arg)
         rocblas_get_stream(handle, &rocblas_stream);
 
         if(blocks > 0)
-            CHECK_ROCBLAS_ERROR(rocblas_trtri_batched<T>(handle,
-                                                         uplo,
-                                                         diag,
-                                                         TRSM_BLOCK,
-                                                         dA,
-                                                         lda,
-                                                         stride_A,
-                                                         dinvA,
-                                                         TRSM_BLOCK,
-                                                         stride_invA,
-                                                         blocks));
+            CHECK_ROCBLAS_ERROR(rocblas_trtri_strided_batched<T>(handle,
+                                                                 uplo,
+                                                                 diag,
+                                                                 TRSM_BLOCK,
+                                                                 dA,
+                                                                 lda,
+                                                                 stride_A,
+                                                                 dinvA,
+                                                                 TRSM_BLOCK,
+                                                                 stride_invA,
+                                                                 blocks));
 
         if(K % TRSM_BLOCK != 0 || blocks == 0)
-            CHECK_ROCBLAS_ERROR(rocblas_trtri_batched<T>(handle,
-                                                         uplo,
-                                                         diag,
-                                                         K - TRSM_BLOCK * blocks,
-                                                         dA + stride_A * blocks,
-                                                         lda,
-                                                         stride_A,
-                                                         dinvA + stride_invA * blocks,
-                                                         TRSM_BLOCK,
-                                                         stride_invA,
-                                                         1));
+            CHECK_ROCBLAS_ERROR(rocblas_trtri_strided_batched<T>(handle,
+                                                                 uplo,
+                                                                 diag,
+                                                                 K - TRSM_BLOCK * blocks,
+                                                                 dA + stride_A * blocks,
+                                                                 lda,
+                                                                 stride_A,
+                                                                 dinvA + stride_invA * blocks,
+                                                                 TRSM_BLOCK,
+                                                                 stride_invA,
+                                                                 1));
 
         size_t x_temp_size = M * N;
         CHECK_ROCBLAS_ERROR(rocblas_trsm_ex(handle,
@@ -256,11 +270,8 @@ void testing_trsm_ex(const Arguments& arg)
                                             dXorB,
                                             ldb,
                                             dinvA,
-                                            TRSM_BLOCK,
-                                            arg.compute_type,
-                                            rocblas_trsm_high_performance,
-                                            &x_temp_size,
-                                            dX_tmp));
+                                            TRSM_BLOCK * K,
+                                            arg.compute_type));
 
         CHECK_HIP_ERROR(hipMemcpy(hXorB_1, dXorB, sizeof(T) * size_B, hipMemcpyDeviceToHost));
 
@@ -282,11 +293,8 @@ void testing_trsm_ex(const Arguments& arg)
                                             dXorB,
                                             ldb,
                                             dinvA,
-                                            TRSM_BLOCK,
-                                            arg.compute_type,
-                                            rocblas_trsm_high_performance,
-                                            &x_temp_size,
-                                            dX_tmp));
+                                            TRSM_BLOCK * K,
+                                            arg.compute_type));
 
         CHECK_HIP_ERROR(hipMemcpy(hXorB_2, dXorB, sizeof(T) * size_B, hipMemcpyDeviceToHost));
 

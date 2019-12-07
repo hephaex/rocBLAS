@@ -1,9 +1,8 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
 
 #include "../../library/src/include/handle.h"
-#include "../../library/src/include/utility.h"
 #include "cblas_interface.hpp"
 #include "rocblas.hpp"
 #include "rocblas_math.hpp"
@@ -15,6 +14,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <sys/param.h>
+#include <unistd.h>
 
 template <typename T>
 static constexpr auto precision_letter = "*";
@@ -169,11 +169,11 @@ void testing_logging()
 
         rocblas_gemv<T>(handle, transA, m, n, &alpha, da, lda, dx, incx, &beta, dy, incy);
 
-        // BLAS3
-        rocblas_geam<T>(handle, transA, transB, m, n, &alpha, da, lda, &beta, db, ldb, dc, ldc);
-
         if(BUILD_WITH_TENSILE)
         {
+            // BLAS3
+            rocblas_geam<T>(handle, transA, transB, m, n, &alpha, da, lda, &beta, db, ldb, dc, ldc);
+
             /* trsm calls rocblas_get_stream and rocblas_dgemm, so test it by comparing files
                rocblas_trsm<T>(handle, side, uplo, transA, diag, m, n, &alpha, da, lda, db,
                ldb);
@@ -210,19 +210,17 @@ void testing_logging()
         // BLAS_EX
         if(BUILD_WITH_TENSILE)
         {
-            void*             alpha          = 0;
-            void*             beta           = 0;
-            float             alpha_float    = 1.0;
-            float             beta_float     = 1.0;
-            rocblas_half      alpha_half     = float_to_half(alpha_float);
-            rocblas_half      beta_half      = float_to_half(beta_float);
-            double            alpha_double   = static_cast<double>(alpha_float);
-            double            beta_double    = static_cast<double>(beta_float);
+            void*             alpha       = 0;
+            void*             beta        = 0;
+            float             alpha_float = 1.0;
+            float             beta_float  = 1.0;
+            rocblas_half      alpha_half(alpha_float);
+            rocblas_half      beta_half(beta_float);
+            double            alpha_double(alpha_float);
+            double            beta_double(beta_float);
             rocblas_gemm_algo algo           = rocblas_gemm_algo_standard;
             int32_t           solution_index = 0;
             uint32_t          flags          = 0;
-            size_t*           workspace_size = 0;
-            void*             workspace      = 0;
             rocblas_datatype  a_type;
             rocblas_datatype  b_type;
             rocblas_datatype  c_type;
@@ -236,8 +234,8 @@ void testing_logging()
                 c_type       = rocblas_datatype_f16_r;
                 d_type       = rocblas_datatype_f16_r;
                 compute_type = rocblas_datatype_f16_r;
-                alpha        = static_cast<void*>(&alpha_half);
-                beta         = static_cast<void*>(&beta_half);
+                alpha        = &alpha_half;
+                beta         = &beta_half;
             }
             else if(std::is_same<T, float>{})
             {
@@ -246,8 +244,8 @@ void testing_logging()
                 c_type       = rocblas_datatype_f32_r;
                 d_type       = rocblas_datatype_f32_r;
                 compute_type = rocblas_datatype_f32_r;
-                alpha        = static_cast<void*>(&alpha_float);
-                beta         = static_cast<void*>(&beta_float);
+                alpha        = &alpha_float;
+                beta         = &beta_float;
             }
             else if(std::is_same<T, double>{})
             {
@@ -256,8 +254,8 @@ void testing_logging()
                 c_type       = rocblas_datatype_f64_r;
                 d_type       = rocblas_datatype_f64_r;
                 compute_type = rocblas_datatype_f64_r;
-                alpha        = static_cast<void*>(&alpha_double);
-                beta         = static_cast<void*>(&beta_double);
+                alpha        = &alpha_double;
+                beta         = &beta_double;
             }
 
             rocblas_gemm_ex(handle,
@@ -283,9 +281,7 @@ void testing_logging()
                             compute_type,
                             algo,
                             solution_index,
-                            flags,
-                            workspace_size,
-                            workspace);
+                            flags);
 
             rocblas_gemm_strided_batched_ex(handle,
                                             transA,
@@ -315,9 +311,7 @@ void testing_logging()
                                             compute_type,
                                             algo,
                                             solution_index,
-                                            flags,
-                                            workspace_size,
-                                            workspace);
+                                            flags);
         }
     }
 
@@ -405,8 +399,10 @@ void testing_logging()
     {
         trace_ofs2 << replaceX<T>("rocblas_Xscal") << "," << n << "," << alpha << "," << (void*)dx
                    << "," << incx << '\n';
-        bench_ofs2 << "./rocblas-bench -f scal -r " << rocblas_precision_string<T> << " -n " << n
-                   << " --incx " << incx << " --alpha " << alpha << '\n';
+        bench_ofs2 << "./rocblas-bench -f scal --a_type "
+                   << rocblas_precision_string<T> << " --b_type "
+                   << rocblas_precision_string<T> << " -n " << n << " --incx " << incx
+                   << " --alpha " << alpha << '\n';
     }
     else
     {
@@ -476,28 +472,28 @@ void testing_logging()
 
     // BLAS3
 
-    if(test_pointer_mode == rocblas_pointer_mode_host)
-    {
-        trace_ofs2 << replaceX<T>("rocblas_Xgeam") << "," << transA << "," << transB << "," << m
-                   << "," << n << "," << alpha << "," << (void*)da << "," << lda << "," << beta
-                   << "," << (void*)db << "," << ldb << "," << (void*)dc << "," << ldc << '\n';
-
-        bench_ofs2 << "./rocblas-bench -f geam -r "
-                   << rocblas_precision_string<T> << " --transposeA " << transA_letter
-                   << " --transposeB " << transB_letter << " -m " << m << " -n " << n << " --alpha "
-                   << alpha << " --lda " << lda << " --beta " << beta << " --ldb " << ldb
-                   << " --ldc " << ldc << '\n';
-    }
-    else
-    {
-        trace_ofs2 << replaceX<T>("rocblas_Xgeam") << "," << transA << "," << transB << "," << m
-                   << "," << n << "," << (void*)&alpha << "," << (void*)da << "," << lda << ","
-                   << (void*)&beta << "," << (void*)db << "," << ldb << "," << (void*)dc << ","
-                   << ldc << '\n';
-    }
-
     if(BUILD_WITH_TENSILE)
     {
+        if(test_pointer_mode == rocblas_pointer_mode_host)
+        {
+            trace_ofs2 << replaceX<T>("rocblas_Xgeam") << "," << transA << "," << transB << "," << m
+                       << "," << n << "," << alpha << "," << (void*)da << "," << lda << "," << beta
+                       << "," << (void*)db << "," << ldb << "," << (void*)dc << "," << ldc << '\n';
+
+            bench_ofs2 << "./rocblas-bench -f geam -r "
+                       << rocblas_precision_string<T> << " --transposeA " << transA_letter
+                       << " --transposeB " << transB_letter << " -m " << m << " -n " << n
+                       << " --alpha " << alpha << " --lda " << lda << " --beta " << beta
+                       << " --ldb " << ldb << " --ldc " << ldc << '\n';
+        }
+        else
+        {
+            trace_ofs2 << replaceX<T>("rocblas_Xgeam") << "," << transA << "," << transB << "," << m
+                       << "," << n << "," << (void*)&alpha << "," << (void*)da << "," << lda << ","
+                       << (void*)&beta << "," << (void*)db << "," << ldb << "," << (void*)dc << ","
+                       << ldc << '\n';
+        }
+
         /* trsm calls rocblas_get_stream and rocblas_dgemm, so test it by comparing files
                 if(test_pointer_mode == rocblas_pointer_mode_host)
                 {
@@ -558,8 +554,8 @@ void testing_logging()
                        << " --transposeB " << transB_letter << " -m " << m << " -n " << n << " -k "
                        << k << " --alpha " << alpha << " --lda " << lda << " --stride_a "
                        << stride_a << " --ldb " << ldb << " --stride_b " << stride_b << " --beta "
-                       << beta << " --ldc " << ldc << " --stride_c " << stride_c << " --batch "
-                       << batch_count << '\n';
+                       << beta << " --ldc " << ldc << " --stride_c " << stride_c
+                       << " --batch_count " << batch_count << '\n';
         }
         else
         {
@@ -602,8 +598,6 @@ void testing_logging()
             rocblas_gemm_algo algo           = rocblas_gemm_algo_standard;
             int32_t           solution_index = 0;
             uint32_t          flags          = 0;
-            size_t*           workspace_size = 0;
-            void*             workspace      = 0;
 
             trace_ofs2 << "rocblas_gemm_ex"
                        << "," << transA << "," << transB << "," << m << "," << n << "," << k << ","
@@ -613,8 +607,7 @@ void testing_logging()
                        << rocblas_datatype_string(c_type) << "," << ldc << "," << (void*)dd << ","
                        << rocblas_datatype_string(d_type) << "," << ldd << ","
                        << rocblas_datatype_string(compute_type) << "," << algo << ","
-                       << solution_index << "," << flags << "," << workspace_size << ","
-                       << (void*)workspace << '\n';
+                       << solution_index << "," << flags << '\n';
 
             bench_ofs2 << "./rocblas-bench -f gemm_ex"
                        << " --transposeA " << transA_letter << " --transposeB " << transB_letter
@@ -625,8 +618,7 @@ void testing_logging()
                        << " --ldc " << ldc << " --d_type " << rocblas_datatype_string(d_type)
                        << " --ldd " << ldd << " --compute_type "
                        << rocblas_datatype_string(compute_type) << " --algo " << algo
-                       << " --solution_index " << solution_index << " --flags " << flags
-                       << " --workspace_size " << workspace_size << '\n';
+                       << " --solution_index " << solution_index << " --flags " << flags << '\n';
 
             trace_ofs2 << "rocblas_gemm_strided_batched_ex"
                        << "," << transA << "," << transB << "," << m << "," << n << "," << k << ","
@@ -637,8 +629,7 @@ void testing_logging()
                        << ldc << "," << stride_c << "," << (void*)dd << ","
                        << rocblas_datatype_string(d_type) << "," << ldd << "," << stride_d << ","
                        << batch_count << "," << rocblas_datatype_string(compute_type) << "," << algo
-                       << "," << solution_index << "," << flags << "," << workspace_size << ","
-                       << (void*)workspace << '\n';
+                       << "," << solution_index << "," << flags << '\n';
 
             bench_ofs2 << "./rocblas-bench -f gemm_strided_batched_ex"
                        << " --transposeA " << transA_letter << " --transposeB " << transB_letter
@@ -649,10 +640,10 @@ void testing_logging()
                        << stride_b << " --beta " << beta << " --c_type "
                        << rocblas_datatype_string(c_type) << " --ldc " << ldc << " --stride_c "
                        << stride_c << " --d_type " << rocblas_datatype_string(d_type) << " --ldd "
-                       << ldd << " --stride_d " << stride_d << " --batch " << batch_count
+                       << ldd << " --stride_d " << stride_d << " --batch_count " << batch_count
                        << " --compute_type " << rocblas_datatype_string(compute_type) << " --algo "
                        << algo << " --solution_index " << solution_index << " --flags " << flags
-                       << " --workspace_size " << workspace_size << '\n';
+                       << '\n';
         }
         else
         {

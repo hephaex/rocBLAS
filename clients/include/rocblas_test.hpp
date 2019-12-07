@@ -1,5 +1,5 @@
 /* ************************************************************************
- * Copyright 2018 Advanced Micro Devices, Inc.
+ * Copyright 2018-2019 Advanced Micro Devices, Inc.
  * ************************************************************************ */
 
 #ifndef ROCBLAS_TEST_H_
@@ -27,29 +27,6 @@
 #define EXPECT_ROCBLAS_STATUS ASSERT_EQ
 
 #else // GOOGLE_TEST
-
-inline const char* rocblas_status_to_string(rocblas_status status)
-{
-    switch(status)
-    {
-    case rocblas_status_success:
-        return "rocblas_status_success";
-    case rocblas_status_invalid_handle:
-        return "rocblas_status_invalid_handle";
-    case rocblas_status_not_implemented:
-        return "rocblas_status_not_implemented";
-    case rocblas_status_invalid_pointer:
-        return "rocblas_status_invalid_pointer";
-    case rocblas_status_invalid_size:
-        return "rocblas_status_invalid_size";
-    case rocblas_status_memory_error:
-        return "rocblas_status_memory_error";
-    case rocblas_status_internal_error:
-        return "rocblas_status_internal_error";
-    default:
-        return "<undefined rocblas_status value>";
-    }
-}
 
 inline void rocblas_expect_status(rocblas_status status, rocblas_status expect)
 {
@@ -114,13 +91,12 @@ inline void rocblas_expect_status(rocblas_status status, rocblas_status expect)
 template <typename>
 class RocBLAS_TestName
 {
-    using table_t = std::unordered_map<std::string, size_t>;
     std::ostringstream str;
 
-    table_t& get_table()
+    static auto& get_table()
     {
         // Placed inside function to avoid dependency on initialization order
-        static table_t* table = test_cleanup::allocate<table_t>(table);
+        static std::unordered_map<std::string, size_t>* table = test_cleanup::allocate(&table);
         return *table;
     }
 
@@ -131,7 +107,7 @@ public:
     operator std::string() &&
     {
         // This table is private to each instantation of RocBLAS_TestName
-        table_t&    table = get_table();
+        auto&       table = get_table();
         std::string name(str.str());
 
         if(name == "")
@@ -222,6 +198,21 @@ public:
 #endif // GOOGLE_TEST
 
 // ----------------------------------------------------------------------------
+// Normal tests which return true when converted to bool
+// ----------------------------------------------------------------------------
+struct rocblas_test_valid
+{
+    // Return true to indicate the type combination is valid, for filtering
+    virtual explicit operator bool() final
+    {
+        return true;
+    }
+
+    // Require derived class to define functor which takes (const Arguments &)
+    virtual void operator()(const Arguments&) = 0;
+};
+
+// ----------------------------------------------------------------------------
 // Error case which returns false when converted to bool. A void specialization
 // of the FILTER class template above, should be derived from this class, in
 // order to indicate that the type combination is invalid.
@@ -229,13 +220,13 @@ public:
 struct rocblas_test_invalid
 {
     // Return false to indicate the type combination is invalid, for filtering
-    explicit operator bool()
+    virtual explicit operator bool() final
     {
         return false;
     }
 
     // If this specialization is actually called, print fatal error message
-    void operator()(const Arguments&)
+    virtual void operator()(const Arguments&) final
     {
         static constexpr char msg[] = "Internal error: Test called with invalid types\n";
 
